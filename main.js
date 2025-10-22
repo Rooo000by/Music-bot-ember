@@ -1,33 +1,43 @@
-require('dotenv').config();
+const { SlashCommandBuilder } = require('discord.js');
 
-const { Player } = require('discord-player');
-const { Client, GatewayIntentBits } = require('discord.js');
-const { YoutubeiExtractor } = require('discord-player-youtubei'); // Import the new extractor
+module.exports = {
+  data: new SlashCommandBuilder()
+    .setName('play')
+    .setDescription('Play a song from YouTube')
+    .addStringOption(option => 
+      option.setName('query')
+        .setDescription('The song name or URL')
+        .setRequired(true)
+    ),
+  async execute(interaction, player) {
+    const query = interaction.options.getString('query');
 
-global.client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMembers,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.GuildVoiceStates,
-        GatewayIntentBits.MessageContent,
-    ],
-    disableMentions: 'everyone',
-});
+    const searchResult = await player.search(query, {
+      requestedBy: interaction.user,
+      searchEngine: 'youtubeSearch'
+    });
 
-client.config = require('./config');
-
-const player = new Player(client, client.config.opt.discordPlayer);
-// Register the new Youtubei extractor
-player.extractors.register(YoutubeiExtractor, {});
-
-console.clear();
-require('./loader');
-
-client.login(client.config.app.token).catch(async (e) => {
-    if (e.message === 'An invalid token was provided.') {
-        require('./process_tools').throwConfigError('app', 'token', '\n\t   ❌ Invalid Token Provided! ❌ \n\tChange the token in the config file\n');
-    } else {
-        console.error('❌ An error occurred while trying to login to the bot! ❌ \n', e);
+    if (!searchResult || !searchResult.tracks.length) {
+      return interaction.reply('No results found!');
     }
-});
+
+    const queue = player.createQueue(interaction.guild, {
+      metadata: {
+        channel: interaction.channel
+      }
+    });
+
+    try {
+      if (!queue.connection) await queue.connect(interaction.member.voice.channel);
+    } catch {
+      player.deleteQueue(interaction.guild.id);
+      return interaction.reply('Could not join your voice channel!');
+    }
+
+    queue.addTrack(searchResult.tracks[0]);
+
+    if (!queue.playing) await queue.play();
+
+    await interaction.reply(`🎶 Playing **${searchResult.tracks[0].title}**`);
+  }
+};
